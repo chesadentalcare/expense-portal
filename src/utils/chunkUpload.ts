@@ -1,7 +1,6 @@
 import { api } from '../api/client'
 
 export const CHUNK_SIZE = 4 * 1024 * 1024
-export const INLINE_MAX = 4 * 1024 * 1024
 export const HARD_MAX = 25 * 1024 * 1024
 
 const randomId = () => {
@@ -25,7 +24,14 @@ export async function uploadInChunks(file: File, onProgress?: (fraction: number)
     fd.append('originalName', file.name)
     fd.append('chunk', blob, file.name)
 
-    const { data } = await api.post('/tada-media-chunk', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    const { data } = await api.post('/tada-media-chunk', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (!onProgress) return
+        const chunkFraction = e.total ? e.loaded / e.total : 0
+        onProgress(Math.min(1, (i + chunkFraction) / totalChunks))
+      },
+    })
     if (!data?.success) throw new Error(data?.error || 'Chunk upload failed')
     if (data.done && data.filename) finalName = data.filename
     onProgress?.((i + 1) / totalChunks)
