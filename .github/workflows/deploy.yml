@@ -2,7 +2,7 @@ name: Deploy expense-portal to EC2
 
 on:
   push:
-    branches: [main]
+    branches: [production-live]
   workflow_dispatch: {}
 
 jobs:
