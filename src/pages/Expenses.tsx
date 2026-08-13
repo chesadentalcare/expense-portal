@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { api, endpoints, billFileUrl } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import SearchSelect from '../components/SearchSelect'
 import StatementModal from '../components/StatementModal'
-import { compressImages, describeUploadError, formatMB } from '../utils/imageCompress'
-import { uploadInChunks, INLINE_MAX, HARD_MAX } from '../utils/chunkUpload'
+import { compressImage, describeUploadError, formatMB } from '../utils/imageCompress'
+import { uploadInChunks, HARD_MAX } from '../utils/chunkUpload'
 import type { Expense, Option } from '../types'
 
 const fmtINR = (n: number | string | null) =>
@@ -77,6 +77,29 @@ const emptyForm = {
   remarks: '',
 }
 
+type Upload = {
+  id: string
+  name: string
+  size: number
+  isImg: boolean
+  previewUrl: string
+  status: 'uploading' | 'done' | 'error'
+  progress: number
+  serverName?: string
+  error?: string
+  file?: File
+}
+
+const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36)
+
+const readAsDataURL = (f: File) =>
+  new Promise<string>((resolve) => {
+    const r = new FileReader()
+    r.onload = () => resolve(typeof r.result === 'string' ? r.result : '')
+    r.onerror = () => resolve('')
+    r.readAsDataURL(f)
+  })
+
 export default function Expenses() {
   const { concern, logout } = useAuth()
   const [rows, setRows] = useState<Expense[]>([])
@@ -84,11 +107,13 @@ export default function Expenses() {
   const [tab, setTab] = useState<Tab>('all')
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ ...emptyForm })
-  const [files, setFiles] = useState<File[]>([])
+  const [uploads, setUploads] = useState<Upload[]>([])
+  const uploadsRef = useRef<Upload[]>([])
+  useEffect(() => {
+    uploadsRef.current = uploads
+  }, [uploads])
   const [dragOver, setDragOver] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [optimizing, setOptimizing] = useState(false)
-  const [uploadPct, setUploadPct] = useState<number | null>(null)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   const [showStatement, setShowStatement] = useState(false)
   const [showLogout, setShowLogout] = useState(false)
@@ -120,31 +145,7 @@ export default function Expenses() {
     return () => window.clearTimeout(t)
   }, [toast])
 
-  const [previews, setPreviews] = useState<{ name: string; size: number; isImg: boolean; url: string }[]>([])
-  const [brokenPreviews, setBrokenPreviews] = useState<Set<number>>(new Set())
-  useEffect(() => {
-    let cancelled = false
-    setBrokenPreviews(new Set())
-    const readAsDataURL = (f: File) =>
-      new Promise<string>((resolve) => {
-        const r = new FileReader()
-        r.onload = () => resolve(typeof r.result === 'string' ? r.result : '')
-        r.onerror = () => resolve('')
-        r.readAsDataURL(f)
-      })
-    void (async () => {
-      const next = await Promise.all(
-        files.map(async (f) => {
-          const isImg = f.type.startsWith('image/')
-          return { name: f.name, size: f.size, isImg, url: isImg ? await readAsDataURL(f) : '' }
-        }),
-      )
-      if (!cancelled) setPreviews(next)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [files])
+  const [brokenPreviews, setBrokenPreviews] = useState<Set<string>>(new Set())
 
   const fetchCategoryOptions = useCallback(async (q: string): Promise<Option[]> => {
     const { data } = await api.get(endpoints.categories, { params: q ? { search: q } : {} })
@@ -199,42 +200,82 @@ export default function Expenses() {
     return { total, pending, progress, paid }
   }, [rows])
 
+  const startUpload = (id: string, file: File, isImg: boolean) => {
+    void (async () => {
+      try {
+        const toSend = isImg ? await compressImage(file) : file
+        const serverName = await uploadInChunks(toSend, (fraction) => {
+          const pct = Math.max(1, Math.min(100, Math.round(fraction * 100)))
+          setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, progress: pct } : u)))
+        })
+        setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, status: 'done', progress: 100, serverName } : u)))
+      } catch (err) {
+        setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, status: 'error', error: describeUploadError(err, file.size) } : u)))
+      }
+    })()
+  }
+
   const addFiles = (list: FileList | null) => {
     if (!list) return
-    setFiles((prev) => {
-      const merged = [...prev]
-      for (const f of Array.from(list)) {
-        if (!merged.some((x) => x.name === f.name && x.size === f.size)) merged.push(f)
+    const current = uploadsRef.current
+    const additions: Upload[] = []
+    for (const f of Array.from(list)) {
+      if (current.length + additions.length >= 5) {
+        setToast({ kind: 'err', msg: 'You can attach up to 5 files.' })
+        break
       }
-      return merged.slice(0, 5)
-    })
+      if (f.size > HARD_MAX) {
+        setToast({ kind: 'err', msg: `“${f.name}” is ${formatMB(f.size)} MB — over the ${Math.round(HARD_MAX / (1024 * 1024))} MB limit.` })
+        continue
+      }
+      if ([...current, ...additions].some((x) => x.name === f.name && x.size === f.size)) continue
+      const isImg = f.type.startsWith('image/')
+      additions.push({ id: genId(), name: f.name, size: f.size, isImg, previewUrl: '', status: 'uploading', progress: 0, file: f })
+    }
+    if (!additions.length) return
+    setUploads((prev) => [...prev, ...additions].slice(0, 5))
+    for (const item of additions) {
+      if (item.file && item.isImg) {
+        void readAsDataURL(item.file).then((url) =>
+          setUploads((prev) => prev.map((u) => (u.id === item.id ? { ...u, previewUrl: url } : u))),
+        )
+      }
+      if (item.file) startUpload(item.id, item.file, item.isImg)
+    }
   }
-  const removeFile = (i: number) => setFiles((prev) => prev.filter((_, idx) => idx !== i))
+
+  const retryUpload = (id: string) => {
+    const item = uploadsRef.current.find((u) => u.id === id)
+    if (!item?.file) return
+    setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, status: 'uploading', progress: 0, error: undefined } : u)))
+    startUpload(id, item.file, item.isImg)
+  }
+
+  const removeFile = (id: string) => setUploads((prev) => prev.filter((u) => u.id !== id))
 
   const resetForm = () => {
     setForm({ ...emptyForm })
-    setFiles([])
+    setUploads([])
+    setBrokenPreviews(new Set())
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!concern) return
+    if (!concern) return setToast({ kind: 'err', msg: 'Session expired — please log in again.' })
     if (!form.category) return setToast({ kind: 'err', msg: 'Select a category' })
     if (!form.amount || Number(form.amount) <= 0) return setToast({ kind: 'err', msg: 'Enter a valid amount' })
     if (!form.bill_date) return setToast({ kind: 'err', msg: 'Select the bill date' })
-    if (!files.length && !form.remarks.trim())
+
+    const done = uploads.filter((u) => u.status === 'done')
+    if (uploads.some((u) => u.status === 'uploading'))
+      return setToast({ kind: 'err', msg: 'Please wait for the file upload to finish.' })
+    if (uploads.some((u) => u.status === 'error'))
+      return setToast({ kind: 'err', msg: 'A file failed to upload — retry or remove it before submitting.' })
+    if (!done.length && !form.remarks.trim())
       return setToast({ kind: 'err', msg: 'Attach a bill, or add remarks if there is no bill' })
 
     setSubmitting(true)
     try {
-      setOptimizing(true)
-      const prepared = await compressImages(files)
-      setOptimizing(false)
-      const oversize = prepared.find((f) => f.size > HARD_MAX)
-      if (oversize) {
-        return setToast({ kind: 'err', msg: `“${oversize.name}” is ${formatMB(oversize.size)} MB — over the ${formatMB(HARD_MAX)} MB limit. Retake or remove it.` })
-      }
-
       const fd = new FormData()
       fd.append('submitted_by', concern.name)
       fd.append('submitted_by_user_id', concern.mobile)
@@ -247,18 +288,7 @@ export default function Expenses() {
       fd.append('bill_description', form.bill_description || '')
       fd.append('remarks', form.remarks || '')
 
-      const large = prepared.filter((f) => f.size > INLINE_MAX)
-      const preUploaded: string[] = []
-      if (large.length) {
-        let done = 0
-        for (const f of large) {
-          const name = await uploadInChunks(f, (frac) => setUploadPct(Math.round(((done + frac) / large.length) * 100)))
-          preUploaded.push(name)
-          done += 1
-        }
-        setUploadPct(null)
-      }
-      prepared.filter((f) => f.size <= INLINE_MAX).forEach((f) => fd.append('billFile', f))
+      const preUploaded = done.map((u) => u.serverName).filter(Boolean) as string[]
       if (preUploaded.length) fd.append('preUploadedBills', JSON.stringify(preUploaded))
 
       await api.post(endpoints.expenses, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
@@ -267,11 +297,9 @@ export default function Expenses() {
       resetForm()
       void load()
     } catch (err) {
-      setToast({ kind: 'err', msg: describeUploadError(err, files.reduce((s, f) => s + f.size, 0)) })
+      setToast({ kind: 'err', msg: describeUploadError(err) })
     } finally {
       setSubmitting(false)
-      setOptimizing(false)
-      setUploadPct(null)
     }
   }
 
@@ -590,7 +618,7 @@ export default function Expenses() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
-                    Remarks {files.length ? '' : <span className="font-medium text-slate-400">(required if no bill)</span>}
+                    Remarks {uploads.length ? '' : <span className="font-medium text-slate-400">(required if no bill)</span>}
                   </label>
                   <textarea
                     rows={2}
@@ -601,7 +629,7 @@ export default function Expenses() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Bill files <span className="font-medium text-slate-400">(image / PDF, up to 5)</span></label>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Bill files <span className="font-medium text-slate-400">(image / PDF · up to 5 · 25 MB each)</span></label>
                   <div
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                     onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
@@ -609,7 +637,7 @@ export default function Expenses() {
                     className={`rounded-2xl border-2 border-dashed px-4 py-5 text-center transition ${
                       dragOver
                         ? 'border-indigo-400 bg-indigo-50'
-                        : files.length
+                        : uploads.length
                           ? 'border-emerald-300 bg-emerald-50/50'
                           : 'border-slate-300 bg-slate-50/70'
                     }`}
@@ -630,45 +658,74 @@ export default function Expenses() {
                         <label htmlFor="ep-files" className="cursor-pointer font-semibold text-indigo-600 hover:underline">Browse files</label>
                         <span className="text-slate-400"> or drag &amp; drop</span>
                       </div>
-                      <div className="text-[11px] text-slate-400">Images or PDF · up to 5 files</div>
-                      {files.length > 0 && (
+                      <div className="text-[11px] text-slate-400">Images or PDF · up to 5 files · 25 MB each</div>
+                      {uploads.length > 0 && (
                         <div className="mt-0.5 flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                          {files.length} file{files.length > 1 ? 's' : ''} attached · tap to add more
+                          {uploads.length} file{uploads.length > 1 ? 's' : ''} attached · tap to add more
                         </div>
                       )}
                     </div>
                   </div>
-                  {previews.length > 0 && (
+                  {uploads.length > 0 && (
                     <>
-                    <div className="mt-3 mb-1.5 text-[12px] font-semibold text-slate-600">Attached ({previews.length})</div>
+                    <div className="mt-3 mb-1.5 text-[12px] font-semibold text-slate-600">Attached ({uploads.length})</div>
                     <div className="grid grid-cols-3 gap-2.5">
-                      {previews.map((p, i) => {
-                        const showImg = p.isImg && p.url && !brokenPreviews.has(i)
+                      {uploads.map((u) => {
+                        const showImg = u.isImg && u.previewUrl && !brokenPreviews.has(u.id)
                         return (
-                        <div key={i} className="group/file relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                        <div key={u.id} className="group/file relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
                           {showImg ? (
                             <img
-                              src={p.url}
-                              alt={p.name}
+                              src={u.previewUrl}
+                              alt={u.name}
                               className="h-20 w-full object-cover"
-                              onError={() => setBrokenPreviews((s) => new Set(s).add(i))}
+                              onError={() => setBrokenPreviews((s) => new Set(s).add(u.id))}
                             />
                           ) : (
                             <div className="flex h-20 flex-col items-center justify-center gap-1 text-slate-400">
                               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 3h7l5 5v11a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                              <span className="text-[10px] font-semibold">{p.isImg ? 'IMAGE' : 'PDF'}</span>
+                              <span className="text-[10px] font-semibold">{u.isImg ? 'IMAGE' : 'PDF'}</span>
                             </div>
                           )}
+
+                          {u.status === 'uploading' && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-slate-900/55">
+                              <span className="text-[15px] font-bold tabular-nums text-white">{u.progress}%</span>
+                              <span className="text-[9px] font-semibold uppercase tracking-wide text-white/80">Uploading</span>
+                              <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/25">
+                                <div className="h-full bg-indigo-400 transition-all duration-200" style={{ width: `${u.progress}%` }} />
+                              </div>
+                            </div>
+                          )}
+
+                          {u.status === 'done' && (
+                            <div className="absolute left-1 top-1 flex items-center gap-0.5 rounded-full bg-emerald-500 py-0.5 pl-1 pr-1.5 text-white shadow">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                              <span className="text-[9px] font-bold">Uploaded</span>
+                            </div>
+                          )}
+
+                          {u.status === 'error' && (
+                            <button
+                              type="button"
+                              onClick={() => retryUpload(u.id)}
+                              className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-rose-600/85 text-white"
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                              <span className="text-[10px] font-bold">Failed · Retry</span>
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            onClick={() => removeFile(i)}
-                            className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/70 text-white shadow transition hover:bg-rose-600"
+                            onClick={() => removeFile(u.id)}
+                            className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/70 text-white shadow transition hover:bg-rose-600"
                             aria-label="Remove file"
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
                           </button>
-                          <div className="truncate bg-white/95 px-1.5 py-1 text-[10px] text-slate-500">{p.name} · {fileSize(p.size)}</div>
+                          <div className="truncate bg-white/95 px-1.5 py-1 text-[10px] text-slate-500">{u.name} · {fileSize(u.size)}</div>
                         </div>
                         )
                       })}
@@ -688,11 +745,11 @@ export default function Expenses() {
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || uploads.some((u) => u.status === 'uploading')}
                   className="flex flex-[2] items-center justify-center gap-2 rounded-2xl gradient-brand py-3 text-[14px] font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 disabled:shadow-none"
                 >
                   {submitting ? <Spinner /> : null}
-                  {optimizing ? 'Optimizing…' : uploadPct !== null ? `Uploading… ${uploadPct}%` : submitting ? 'Submitting…' : 'Submit for Approval'}
+                  {uploads.some((u) => u.status === 'uploading') ? 'Uploading…' : submitting ? 'Submitting…' : 'Submit for Approval'}
                 </button>
               </div>
             </form>
