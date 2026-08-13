@@ -3,7 +3,8 @@ import { api, endpoints, billFileUrl } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import SearchSelect from '../components/SearchSelect'
 import StatementModal from '../components/StatementModal'
-import { compressImages, describeUploadError, formatMB, MAX_FILE_SIZE } from '../utils/imageCompress'
+import { compressImages, describeUploadError, formatMB } from '../utils/imageCompress'
+import { uploadInChunks, INLINE_MAX, HARD_MAX } from '../utils/chunkUpload'
 import type { Expense, Option } from '../types'
 
 const fmtINR = (n: number | string | null) =>
@@ -87,6 +88,7 @@ export default function Expenses() {
   const [dragOver, setDragOver] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [optimizing, setOptimizing] = useState(false)
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   const [showStatement, setShowStatement] = useState(false)
   const [showLogout, setShowLogout] = useState(false)
@@ -228,9 +230,9 @@ export default function Expenses() {
       setOptimizing(true)
       const prepared = await compressImages(files)
       setOptimizing(false)
-      const oversize = prepared.find((f) => f.size > MAX_FILE_SIZE)
+      const oversize = prepared.find((f) => f.size > HARD_MAX)
       if (oversize) {
-        return setToast({ kind: 'err', msg: `“${oversize.name}” is ${formatMB(oversize.size)} MB — over the 5 MB limit even after compression. Retake or remove it.` })
+        return setToast({ kind: 'err', msg: `“${oversize.name}” is ${formatMB(oversize.size)} MB — over the ${formatMB(HARD_MAX)} MB limit. Retake or remove it.` })
       }
 
       const fd = new FormData()
@@ -244,7 +246,20 @@ export default function Expenses() {
       fd.append('bill_date', form.bill_date)
       fd.append('bill_description', form.bill_description || '')
       fd.append('remarks', form.remarks || '')
-      prepared.forEach((f) => fd.append('billFile', f))
+
+      const large = prepared.filter((f) => f.size > INLINE_MAX)
+      const preUploaded: string[] = []
+      if (large.length) {
+        let done = 0
+        for (const f of large) {
+          const name = await uploadInChunks(f, (frac) => setUploadPct(Math.round(((done + frac) / large.length) * 100)))
+          preUploaded.push(name)
+          done += 1
+        }
+        setUploadPct(null)
+      }
+      prepared.filter((f) => f.size <= INLINE_MAX).forEach((f) => fd.append('billFile', f))
+      if (preUploaded.length) fd.append('preUploadedBills', JSON.stringify(preUploaded))
 
       await api.post(endpoints.expenses, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
       setToast({ kind: 'ok', msg: 'Expense submitted for approval' })
@@ -256,6 +271,7 @@ export default function Expenses() {
     } finally {
       setSubmitting(false)
       setOptimizing(false)
+      setUploadPct(null)
     }
   }
 
@@ -676,7 +692,7 @@ export default function Expenses() {
                   className="flex flex-[2] items-center justify-center gap-2 rounded-2xl gradient-brand py-3 text-[14px] font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 disabled:shadow-none"
                 >
                   {submitting ? <Spinner /> : null}
-                  {optimizing ? 'Optimizing…' : submitting ? 'Submitting…' : 'Submit for Approval'}
+                  {optimizing ? 'Optimizing…' : uploadPct !== null ? `Uploading… ${uploadPct}%` : submitting ? 'Submitting…' : 'Submit for Approval'}
                 </button>
               </div>
             </form>
