@@ -9,7 +9,7 @@ const randomId = () => {
   return base.replace(/[^a-zA-Z0-9]/g, '').slice(0, 64)
 }
 
-export async function uploadInChunks(file: File, onProgress?: (fraction: number) => void): Promise<string> {
+export async function uploadInChunks(file: File, onProgress?: (fraction: number) => void, folder?: string): Promise<string> {
   const uploadId = randomId()
   const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE))
   let finalName = ''
@@ -22,6 +22,7 @@ export async function uploadInChunks(file: File, onProgress?: (fraction: number)
     fd.append('chunkIndex', String(i))
     fd.append('totalChunks', String(totalChunks))
     fd.append('originalName', file.name)
+    if (folder) fd.append('folder', folder)
     fd.append('chunk', blob, file.name)
 
     const { data } = await api.post('/tada-media-chunk', fd, {

@@ -207,7 +207,7 @@ export default function Expenses() {
         const serverName = await uploadInChunks(toSend, (fraction) => {
           const pct = Math.max(1, Math.min(100, Math.round(fraction * 100)))
           setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, progress: pct } : u)))
-        })
+        }, 'expense_portal')
         setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, status: 'done', progress: 100, serverName } : u)))
       } catch (err) {
         setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, status: 'error', error: describeUploadError(err, file.size) } : u)))
