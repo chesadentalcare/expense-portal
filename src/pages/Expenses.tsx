@@ -3,6 +3,7 @@ import { api, endpoints, billFileUrl } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import SearchSelect from '../components/SearchSelect'
 import StatementModal from '../components/StatementModal'
+import CreateVendorModal from '../components/CreateVendorModal'
 import { compressImage, describeUploadError, formatMB } from '../utils/imageCompress'
 import { uploadInChunks, HARD_MAX } from '../utils/chunkUpload'
 import type { Expense, Option } from '../types'
@@ -117,6 +118,7 @@ export default function Expenses() {
   const [toast, setToast] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
   const [showStatement, setShowStatement] = useState(false)
   const [showLogout, setShowLogout] = useState(false)
+  const [showVendorModal, setShowVendorModal] = useState(false)
 
   const setField = (k: keyof typeof emptyForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -579,6 +581,17 @@ export default function Expenses() {
                       }))
                     }
                   />
+                  <div className="mt-1.5 text-[12px] text-slate-500">
+                    Can't find the vendor?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowVendorModal(true)}
+                      className="inline-flex items-center gap-0.5 font-semibold text-indigo-600 hover:underline"
+                    >
+                      <PlusIcon className="h-3.5 w-3.5" />
+                      Create vendor
+                    </button>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -794,6 +807,8 @@ export default function Expenses() {
         rows={rows}
         concernName={concern?.name || ''}
       />
+
+      <CreateVendorModal open={showVendorModal} onClose={() => setShowVendorModal(false)} />
 
       {toast && (
         <div

@@ -18,5 +18,6 @@ export const endpoints = {
   verifyOtp: '/verify-otp',
   categories: '/production-expense/categories',
   vendors: '/production-expense/vendors',
+  vendorRequest: '/vendor-requests/request',
   expenses: '/production-expense',
 }
