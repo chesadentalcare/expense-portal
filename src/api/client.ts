@@ -19,5 +19,7 @@ export const endpoints = {
   categories: '/production-expense/categories',
   vendors: '/production-expense/vendors',
   vendorRequest: '/vendor-requests/request',
+  vendorRequestsMine: '/vendor-requests/mine',
+  vendorRequestUpdate: '/vendor-requests/update',
   expenses: '/production-expense',
 }
