@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import axios from 'axios'
 import { api, API_BASE, endpoints } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 
-type Props = { open: boolean; onClose: () => void; onSuccess?: () => void }
+type Props = { open: boolean; onClose: () => void; onSuccess?: () => void; editRequest?: any }
 
 type Toast = { kind: 'ok' | 'err'; msg: string }
 
@@ -21,19 +21,46 @@ const emptyForm = {
   reason: '',
 }
 
-const inputCls =
-  'w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-[14px] text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 placeholder:text-slate-300'
-const invalidCls = 'border-rose-400 focus:border-rose-400 focus:ring-rose-100'
-const labelCls = 'mb-1 block text-[12.5px] font-medium text-slate-600'
+const fromRequest = (r: any): typeof emptyForm => ({
+  vendorName: r?.vendor_name || '',
+  contactPerson: r?.contact_person || '',
+  phone: r?.phone || '',
+  email: r?.email || '',
+  gstin: r?.gstin || '',
+  pan: r?.pan || '',
+  billingAddress: r?.billing_address || '',
+  billingCity: r?.billing_city || '',
+  billingState: r?.billing_state || '',
+  billingPincode: r?.billing_pincode || '',
+  reason: r?.reason || '',
+})
 
-export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
+const inputCls =
+  'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-indigo-300 focus:ring-1 focus:ring-indigo-200 placeholder:text-slate-300'
+const invalidCls = 'border-rose-300 focus:border-rose-300 focus:ring-rose-200'
+const labelCls = 'mb-1 block text-xs text-slate-500'
+
+export default function CreateVendorModal({ open, onClose, onSuccess, editRequest }: Props) {
   const { concern } = useAuth()
   const [form, setForm] = useState({ ...emptyForm })
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
   const [createdId, setCreatedId] = useState<number | null>(null)
+  const [updated, setUpdated] = useState(false)
   const [inlineError, setInlineError] = useState('')
+
+  const isEdit = !!editRequest
+
+  useEffect(() => {
+    if (!open) return
+    setForm(editRequest ? fromRequest(editRequest) : { ...emptyForm })
+    setSubmitted(false)
+    setCreatedId(null)
+    setUpdated(false)
+    setInlineError('')
+    setToast(null)
+  }, [open, editRequest])
 
   const setField = (k: keyof typeof emptyForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -49,17 +76,8 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
     billingCity: submitted && !billingCity,
   }
 
-  const reset = () => {
-    setForm({ ...emptyForm })
-    setSubmitted(false)
-    setCreatedId(null)
-    setInlineError('')
-    setToast(null)
-  }
-
   const close = () => {
     if (submitting) return
-    reset()
     onClose()
   }
 
@@ -74,7 +92,7 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
 
     setSubmitting(true)
     try {
-      const { data } = await api.post(`${API_BASE}${endpoints.vendorRequest}`, {
+      const fields = {
         vendorName,
         contactPerson: form.contactPerson.trim(),
         phone,
@@ -86,23 +104,35 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
         billingState: form.billingState.trim(),
         billingPincode: form.billingPincode.trim(),
         reason: form.reason.trim(),
-        requestedBy: concern?.name,
-        requestedByUserId: concern?.mobile,
-        requestedFrom: 'expense-portal',
-      })
+      }
+      const { data } = isEdit
+        ? await api.post(`${API_BASE}${endpoints.vendorRequestUpdate}`, { id: editRequest.id, ...fields })
+        : await api.post(`${API_BASE}${endpoints.vendorRequest}`, {
+            ...fields,
+            requestedBy: concern?.name,
+            requestedByUserId: concern?.mobile,
+            requestedFrom: 'expense-portal',
+          })
       if (data?.success) {
-        setCreatedId(typeof data.id === 'number' ? data.id : null)
-        setToast({ kind: 'ok', msg: 'Vendor request sent to Accounts for approval' })
-        onSuccess?.()
+        if (isEdit) {
+          setUpdated(true)
+          setToast({ kind: 'ok', msg: 'Request updated' })
+          onSuccess?.()
+          close()
+        } else {
+          setCreatedId(typeof data.id === 'number' ? data.id : null)
+          setToast({ kind: 'ok', msg: 'Vendor request sent to Accounts for approval' })
+          onSuccess?.()
+        }
       } else {
-        const msg = data?.error || 'Could not send the vendor request'
+        const msg = data?.error || 'Could not save the vendor request'
         setInlineError(msg)
         setToast({ kind: 'err', msg })
       }
     } catch (error) {
       const msg = axios.isAxiosError(error)
         ? error.response?.data?.error || error.message
-        : 'Could not send the vendor request'
+        : 'Could not save the vendor request'
       setInlineError(msg)
       setToast({ kind: 'err', msg })
     } finally {
@@ -112,15 +142,15 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
 
   if (!open) return null
 
-  const success = createdId !== null
+  const success = !isEdit && createdId !== null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 backdrop-blur-sm animate-fade sm:items-center" onClick={close}>
-      <div className="max-h-[94dvh] w-full overflow-hidden rounded-t-3xl bg-white shadow-card-lg animate-sheet sm:max-w-lg sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+      <div className="max-h-[94dvh] w-full overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-card-lg animate-sheet sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
           <div>
-            <h3 className="text-base font-bold text-slate-900">Request New Vendor</h3>
-            <p className="text-[12px] text-slate-500">Accounts will review and add this vendor</p>
+            <h3 className="text-[15px] font-semibold text-slate-900">{isEdit ? 'Edit vendor request' : 'Request New Vendor'}</h3>
+            <p className="text-xs text-slate-500">{isEdit ? 'Update details before Accounts reviews it' : 'Accounts will review and add this vendor'}</p>
           </div>
           <button onClick={close} className="text-slate-400 hover:text-slate-700">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
@@ -129,23 +159,23 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
 
         {success ? (
           <div className="flex flex-col items-center px-6 py-10 text-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100 animate-pop">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100 animate-pop">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
-            <h4 className="mt-4 text-[18px] font-bold text-slate-900">Request sent</h4>
-            <p className="mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-slate-500">
+            <h4 className="mt-4 text-base font-semibold text-slate-900">Request sent</h4>
+            <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-slate-500">
               Vendor request #{createdId} has been sent to Accounts for approval. It'll appear in the vendor list once approved.
             </p>
             <button
               onClick={close}
-              className="mt-6 w-full rounded-2xl gradient-brand py-3 text-[14px] font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99]"
+              className="mt-6 w-full rounded-lg gradient-brand py-2.5 text-sm font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99]"
             >
               Done
             </button>
           </div>
         ) : (
           <form onSubmit={submit} className="flex max-h-[80dvh] flex-col">
-            <div className="space-y-3.5 overflow-y-auto px-5 py-5">
+            <div className="space-y-3 overflow-y-auto px-5 py-4">
               <div>
                 <label className={labelCls}>Vendor name <span className="text-rose-400">*</span></label>
                 <input
@@ -156,7 +186,7 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
                   className={`${inputCls} ${err.vendorName ? invalidCls : ''}`}
                 />
               </div>
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className={labelCls}>Contact person</label>
                   <input
@@ -190,7 +220,7 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
                   className={inputCls}
                 />
               </div>
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className={labelCls}>GSTIN</label>
                   <input
@@ -222,7 +252,7 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
                   className={`${inputCls} resize-none ${err.billingAddress ? invalidCls : ''}`}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <div>
                   <label className={labelCls}>City <span className="text-rose-400">*</span></label>
                   <input
@@ -268,31 +298,31 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
               </div>
 
               {inlineError && (
-                <div className="flex items-start gap-2 rounded-xl bg-rose-50 px-3 py-2.5 text-[12.5px] text-rose-700 ring-1 ring-rose-100">
+                <div className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-100">
                   <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" strokeLinecap="round" /></svg>
                   <span>{inlineError}</span>
                 </div>
               )}
             </div>
 
-            <div className="flex gap-3 border-t border-slate-100 px-5 py-4">
+            <div className="flex gap-3 border-t border-slate-100 px-5 py-3.5">
               <button
                 type="button"
                 onClick={close}
                 disabled={submitting}
-                className="flex-1 rounded-2xl border border-slate-200 py-3 text-[14px] font-semibold text-slate-600 transition hover:bg-slate-50 active:scale-[0.99]"
+                className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 active:scale-[0.99]"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={submitting}
-                className="flex flex-[2] items-center justify-center gap-2 rounded-2xl gradient-brand py-3 text-[14px] font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 disabled:shadow-none"
+                disabled={submitting || updated}
+                className="flex flex-[2] items-center justify-center gap-2 rounded-lg gradient-brand py-2.5 text-sm font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 disabled:shadow-none"
               >
                 {submitting ? (
                   <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" className="opacity-25" /><path d="M21 12a9 9 0 00-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /></svg>
                 ) : null}
-                {submitting ? 'Sending…' : 'Send Request to Accounts'}
+                {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Send Request to Accounts'}
               </button>
             </div>
           </form>
@@ -301,7 +331,7 @@ export default function CreateVendorModal({ open, onClose, onSuccess }: Props) {
 
       {toast && (
         <div
-          className={`fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-2xl px-4 py-3 text-[13px] font-semibold text-white shadow-card-lg animate-rise ${
+          className={`fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white shadow-card-lg animate-rise ${
             toast.kind === 'ok' ? 'bg-emerald-600' : 'bg-rose-600'
           }`}
         >

@@ -91,6 +91,15 @@ type Upload = {
   file?: File
 }
 
+type VendorRequest = {
+  id: number
+  vendor_name: string
+  status: string
+  sap_card_code: string | null
+  review_notes: string | null
+  [k: string]: unknown
+}
+
 const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36)
 
 const readAsDataURL = (f: File) =>
@@ -119,6 +128,8 @@ export default function Expenses() {
   const [showStatement, setShowStatement] = useState(false)
   const [showLogout, setShowLogout] = useState(false)
   const [showVendorModal, setShowVendorModal] = useState(false)
+  const [vendorRequests, setVendorRequests] = useState<VendorRequest[]>([])
+  const [editVendorRequest, setEditVendorRequest] = useState<VendorRequest | null>(null)
 
   const setField = (k: keyof typeof emptyForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -137,9 +148,25 @@ export default function Expenses() {
     }
   }, [concern])
 
+  const loadVendorRequests = useCallback(async () => {
+    if (!concern) return
+    try {
+      const { data } = await api.get(endpoints.vendorRequestsMine, {
+        params: { userId: concern.mobile, by: concern.name },
+      })
+      setVendorRequests(data?.requests || [])
+    } catch {
+      setVendorRequests([])
+    }
+  }, [concern])
+
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (showForm) void loadVendorRequests()
+  }, [showForm, loadVendorRequests])
 
   useEffect(() => {
     if (!toast) return
@@ -585,13 +612,55 @@ export default function Expenses() {
                     Can't find the vendor?{' '}
                     <button
                       type="button"
-                      onClick={() => setShowVendorModal(true)}
+                      onClick={() => { setEditVendorRequest(null); setShowVendorModal(true) }}
                       className="inline-flex items-center gap-0.5 font-semibold text-indigo-600 hover:underline"
                     >
                       <PlusIcon className="h-3.5 w-3.5" />
                       Create vendor
                     </button>
                   </div>
+                  {vendorRequests.length > 0 && (
+                    <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50/60 p-2.5">
+                      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Your vendor requests</div>
+                      <div className="space-y-1.5">
+                        {vendorRequests.map((vr) => {
+                          const pending = vr.status === 'pending'
+                          const approved = vr.status === 'approved'
+                          const rejected = vr.status === 'rejected'
+                          const pillCls = approved
+                            ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                            : rejected
+                              ? 'bg-rose-50 text-rose-700 ring-rose-200'
+                              : 'bg-amber-50 text-amber-700 ring-amber-200'
+                          const pillLabel = approved
+                            ? `SAP ${vr.sap_card_code || '—'}`
+                            : rejected
+                              ? 'Rejected'
+                              : 'Pending'
+                          return (
+                            <div key={vr.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-slate-100">
+                              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-slate-700">{vr.vendor_name}</span>
+                              <span
+                                title={rejected ? vr.review_notes || undefined : undefined}
+                                className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ${pillCls}`}
+                              >
+                                {pillLabel}
+                              </span>
+                              {pending && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setEditVendorRequest(vr); setShowVendorModal(true) }}
+                                  className="shrink-0 text-[11.5px] font-semibold text-indigo-600 hover:underline"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -808,7 +877,12 @@ export default function Expenses() {
         concernName={concern?.name || ''}
       />
 
-      <CreateVendorModal open={showVendorModal} onClose={() => setShowVendorModal(false)} />
+      <CreateVendorModal
+        open={showVendorModal}
+        editRequest={editVendorRequest}
+        onClose={() => { setShowVendorModal(false); setEditVendorRequest(null) }}
+        onSuccess={() => void loadVendorRequests()}
+      />
 
       {toast && (
         <div
