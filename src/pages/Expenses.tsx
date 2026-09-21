@@ -67,10 +67,12 @@ const TABS = [
 
 type Tab = (typeof TABS)[number]['key']
 
+type PayTo = 'vendor' | 'employee' | 'petty_cash'
+
 const emptyForm = {
   category: '',
   category_gl_code: '',
-  payTo: 'vendor',
+  payTo: 'vendor' as PayTo,
   vendor: '',
   vendor_card_code: '',
   employee_name: '',
@@ -305,6 +307,36 @@ export default function Expenses() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!concern) return setToast({ kind: 'err', msg: 'Session expired — please log in again.' })
+
+    if (form.payTo === 'petty_cash') {
+      if (!form.amount || Number(form.amount) <= 0) return setToast({ kind: 'err', msg: 'Enter a valid amount' })
+      if (!form.remarks.trim()) return setToast({ kind: 'err', msg: 'Enter a reason for the petty cash' })
+
+      setSubmitting(true)
+      try {
+        const fd = new FormData()
+        fd.append('submitted_by', concern.name)
+        fd.append('submitted_by_user_id', concern.mobile)
+        fd.append('pay_to_type', 'petty_cash')
+        fd.append('category', 'Petty Cash')
+        fd.append('amount', form.amount)
+        fd.append('bill_date', new Date().toISOString().split('T')[0])
+        fd.append('bill_description', form.remarks)
+        fd.append('remarks', form.remarks)
+
+        await api.post(endpoints.expenses, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+        setToast({ kind: 'ok', msg: 'Petty cash request submitted for approval' })
+        setShowForm(false)
+        resetForm()
+        void load()
+      } catch (err) {
+        setToast({ kind: 'err', msg: describeUploadError(err) })
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
     if (!form.category) return setToast({ kind: 'err', msg: 'Select a category' })
     if (!form.amount || Number(form.amount) <= 0) return setToast({ kind: 'err', msg: 'Enter a valid amount' })
     if (!form.bill_date) return setToast({ kind: 'err', msg: 'Select the bill date' })
@@ -591,8 +623,8 @@ export default function Expenses() {
                   <PlusIcon className="h-[18px] w-[18px]" />
                 </span>
                 <div className="leading-tight">
-                  <h3 className="text-base font-bold text-slate-900">{form.payTo === 'employee' ? 'New Reimbursement' : 'New Expense'}</h3>
-                  <p className="text-[12px] text-slate-500">{form.payTo === 'employee' ? 'Reimburse an employee — sent for approval' : 'Submit a bill for approval'}</p>
+                  <h3 className="text-base font-bold text-slate-900">{form.payTo === 'petty_cash' ? 'Petty Cash Request' : form.payTo === 'employee' ? 'New Reimbursement' : 'New Expense'}</h3>
+                  <p className="text-[12px] text-slate-500">{form.payTo === 'petty_cash' ? 'Request petty cash funding — sent for approval' : form.payTo === 'employee' ? 'Reimburse an employee — sent for approval' : 'Submit a bill for approval'}</p>
                 </div>
               </div>
               <button onClick={() => !submitting && setShowForm(false)} className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
@@ -600,10 +632,11 @@ export default function Expenses() {
               </button>
             </div>
             <div className="flex border-b border-slate-100">
-              {[
+              {([
                 { key: 'vendor', label: 'Expense' },
                 { key: 'employee', label: 'Reimbursement' },
-              ].map((t) => (
+                { key: 'petty_cash', label: 'Petty Cash' },
+              ] as { key: PayTo; label: string }[]).map((t) => (
                 <button
                   key={t.key}
                   type="button"
@@ -630,6 +663,40 @@ export default function Expenses() {
             </div>
             <form onSubmit={submit} className="flex max-h-[80dvh] flex-col">
               <div className="space-y-4 overflow-y-auto px-5 py-5">
+                {form.payTo === 'petty_cash' ? (
+                <>
+                <div>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Amount *</label>
+                  <div className="flex items-center rounded-2xl border border-slate-300 bg-white px-3.5 transition focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-100">
+                    <span className="text-[15px] font-semibold text-slate-400">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.amount}
+                      onChange={(e) => setField('amount', e.target.value)}
+                      placeholder="0.00"
+                      className="min-w-0 flex-1 border-none bg-transparent py-3 pl-2 text-[15px] tnum text-slate-900 outline-none placeholder:text-slate-300"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Reason *</label>
+                  <textarea
+                    rows={3}
+                    value={form.remarks}
+                    onChange={(e) => setField('remarks', e.target.value)}
+                    placeholder="What is this petty cash for?"
+                    className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-3.5 py-3 text-[15px] text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 placeholder:text-slate-300"
+                  />
+                </div>
+                <div className="flex items-start gap-2 rounded-xl bg-indigo-50 px-3 py-2.5 text-[12px] text-indigo-700 ring-1 ring-indigo-100">
+                  <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" strokeLinecap="round" /></svg>
+                  <span>Cash will be released from the bank into the Tumukur Production Petty Cash box after approval.</span>
+                </div>
+                </>
+                ) : (
+                <>
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Category *</label>
                   <SearchSelect
@@ -876,6 +943,8 @@ export default function Expenses() {
                     </>
                   )}
                 </div>
+                </>
+                )}
               </div>
               <div className="flex gap-3 border-t border-slate-100 px-5 py-4">
                 <button

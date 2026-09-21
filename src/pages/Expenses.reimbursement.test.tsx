@@ -96,4 +96,27 @@ describe('Expenses — reimbursement submission', () => {
     expect(fd.get('vendor')).toBe('ACME Supplies')
     expect(fd.get('employee_ref_id')).toBeNull()
   })
+
+  it('sends pay_to_type=petty_cash with amount and reason (no vendor, no employee) on the Petty Cash tab', async () => {
+    const user = userEvent.setup()
+    render(<Expenses />)
+    await openForm(user)
+
+    await user.click(screen.getByRole('button', { name: 'Petty Cash' }))
+    await user.type(screen.getByPlaceholderText('0.00'), '1500')
+    await user.type(screen.getByPlaceholderText(/What is this petty cash for\?/i), 'Office cleaning supplies')
+
+    await user.click(screen.getByRole('button', { name: /Submit for Approval/i }))
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled())
+    const fd = (api.post as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1] as FormData
+    expect(fd.get('pay_to_type')).toBe('petty_cash')
+    expect(fd.get('category')).toBe('Petty Cash')
+    expect(fd.get('amount')).toBe('1500')
+    expect(fd.get('bill_date')).toBe(new Date().toISOString().split('T')[0])
+    expect(fd.get('bill_description')).toBe('Office cleaning supplies')
+    expect(fd.get('remarks')).toBe('Office cleaning supplies')
+    expect(fd.get('vendor')).toBeNull()
+    expect(fd.get('employee_ref_id')).toBeNull()
+  })
 })
