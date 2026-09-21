@@ -70,8 +70,12 @@ type Tab = (typeof TABS)[number]['key']
 const emptyForm = {
   category: '',
   category_gl_code: '',
+  payTo: 'vendor',
   vendor: '',
   vendor_card_code: '',
+  employee_name: '',
+  employee_source: '',
+  employee_ref_id: '',
   amount: '',
   bill_date: '',
   bill_description: '',
@@ -195,6 +199,16 @@ export default function Expenses() {
     }))
   }, [])
 
+  const fetchEmployeeOptions = useCallback(async (q: string): Promise<Option[]> => {
+    const { data } = await api.get(endpoints.employeeList, { params: q ? { search: q } : {} })
+    return (data?.data || []).map((e: { id: string | number; source: string; employee_name: string; department?: string; mobile_no?: string }) => ({
+      key: `${e.source}:${e.id}`,
+      label: e.employee_name,
+      sub: [e.department, e.mobile_no].filter(Boolean).join(' · '),
+      raw: e,
+    }))
+  }, [])
+
   const filtered = useMemo(() => {
     if (tab === 'all') return rows
     if (tab === 'pending') return rows.filter((r) => r.status === 'submitted')
@@ -294,6 +308,7 @@ export default function Expenses() {
     if (!form.category) return setToast({ kind: 'err', msg: 'Select a category' })
     if (!form.amount || Number(form.amount) <= 0) return setToast({ kind: 'err', msg: 'Enter a valid amount' })
     if (!form.bill_date) return setToast({ kind: 'err', msg: 'Select the bill date' })
+    if (form.payTo === 'employee' && !form.employee_ref_id) return setToast({ kind: 'err', msg: 'Select an employee to reimburse' })
 
     const done = uploads.filter((u) => u.status === 'done')
     if (uploads.some((u) => u.status === 'uploading'))
@@ -310,8 +325,15 @@ export default function Expenses() {
       fd.append('submitted_by_user_id', concern.mobile)
       fd.append('category', form.category)
       fd.append('gl_code', form.category_gl_code || '')
-      fd.append('vendor', form.vendor || '')
-      fd.append('vendor_card_code', form.vendor_card_code || '')
+      fd.append('pay_to_type', form.payTo)
+      if (form.payTo === 'employee') {
+        fd.append('employee_name', form.employee_name || '')
+        fd.append('employee_source', form.employee_source || '')
+        fd.append('employee_ref_id', form.employee_ref_id || '')
+      } else {
+        fd.append('vendor', form.vendor || '')
+        fd.append('vendor_card_code', form.vendor_card_code || '')
+      }
       fd.append('amount', form.amount)
       fd.append('bill_date', form.bill_date)
       fd.append('bill_description', form.bill_description || '')
@@ -569,13 +591,42 @@ export default function Expenses() {
                   <PlusIcon className="h-[18px] w-[18px]" />
                 </span>
                 <div className="leading-tight">
-                  <h3 className="text-base font-bold text-slate-900">New Expense</h3>
-                  <p className="text-[12px] text-slate-500">Submit a bill for approval</p>
+                  <h3 className="text-base font-bold text-slate-900">{form.payTo === 'employee' ? 'New Reimbursement' : 'New Expense'}</h3>
+                  <p className="text-[12px] text-slate-500">{form.payTo === 'employee' ? 'Reimburse an employee — sent for approval' : 'Submit a bill for approval'}</p>
                 </div>
               </div>
               <button onClick={() => !submitting && setShowForm(false)} className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
               </button>
+            </div>
+            <div className="flex border-b border-slate-100">
+              {[
+                { key: 'vendor', label: 'Expense' },
+                { key: 'employee', label: 'Reimbursement' },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      payTo: t.key,
+                      vendor: '',
+                      vendor_card_code: '',
+                      employee_name: '',
+                      employee_source: '',
+                      employee_ref_id: '',
+                    }))
+                  }
+                  className={`flex-1 py-2.5 text-[13px] font-bold transition ${
+                    form.payTo === t.key
+                      ? 'border-b-2 border-indigo-600 text-indigo-600'
+                      : 'border-b-2 border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
             <form onSubmit={submit} className="flex max-h-[80dvh] flex-col">
               <div className="space-y-4 overflow-y-auto px-5 py-5">
@@ -594,6 +645,7 @@ export default function Expenses() {
                     }
                   />
                 </div>
+                {form.payTo === 'vendor' ? (
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Vendor</label>
                   <SearchSelect
@@ -662,6 +714,25 @@ export default function Expenses() {
                     </div>
                   )}
                 </div>
+                ) : (
+                <div>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Employee *</label>
+                  <SearchSelect
+                    value={form.employee_name}
+                    placeholder="Search employee to reimburse"
+                    fetchOptions={fetchEmployeeOptions}
+                    onSelect={(opt) =>
+                      setForm((f) => ({
+                        ...f,
+                        employee_name: opt ? opt.label : '',
+                        employee_source: opt ? String(opt.raw.source ?? '') : '',
+                        employee_ref_id: opt ? String(opt.raw.id ?? '') : '',
+                      }))
+                    }
+                  />
+                  <div className="mt-1.5 text-[12px] text-slate-500">Reimbursement is paid to the employee — no vendor.</div>
+                </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Amount *</label>
