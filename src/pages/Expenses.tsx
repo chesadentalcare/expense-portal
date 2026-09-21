@@ -336,7 +336,7 @@ export default function Expenses() {
       }
       fd.append('amount', form.amount)
       fd.append('bill_date', form.bill_date)
-      fd.append('bill_description', form.bill_description || '')
+      fd.append('bill_description', form.remarks || '')
       fd.append('remarks', form.remarks || '')
 
       const preUploaded = done.map((u) => u.serverName).filter(Boolean) as string[]
@@ -758,16 +758,6 @@ export default function Expenses() {
                       className="w-full rounded-2xl border border-slate-300 bg-white px-3.5 py-3 text-[15px] text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
                     />
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Description</label>
-                  <input
-                    type="text"
-                    value={form.bill_description}
-                    onChange={(e) => setField('bill_description', e.target.value)}
-                    placeholder="Short description"
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-3.5 py-3 text-[15px] text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 placeholder:text-slate-300"
-                  />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
