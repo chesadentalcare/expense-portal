@@ -311,6 +311,10 @@ export default function Expenses() {
     if (form.payTo === 'petty_cash') {
       if (!form.amount || Number(form.amount) <= 0) return setToast({ kind: 'err', msg: 'Enter a valid amount' })
       if (!form.remarks.trim()) return setToast({ kind: 'err', msg: 'Enter a reason for the petty cash' })
+      if (uploads.some((u) => u.status === 'uploading'))
+        return setToast({ kind: 'err', msg: 'Please wait for the file upload to finish.' })
+      if (uploads.some((u) => u.status === 'error'))
+        return setToast({ kind: 'err', msg: 'A file failed to upload — retry or remove it before submitting.' })
 
       setSubmitting(true)
       try {
@@ -323,6 +327,9 @@ export default function Expenses() {
         fd.append('bill_date', new Date().toISOString().split('T')[0])
         fd.append('bill_description', form.remarks)
         fd.append('remarks', form.remarks)
+
+        const pettyPreUploaded = uploads.filter((u) => u.status === 'done').map((u) => u.serverName).filter(Boolean) as string[]
+        if (pettyPreUploaded.length) fd.append('preUploadedBills', JSON.stringify(pettyPreUploaded))
 
         await api.post(endpoints.expenses, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
         setToast({ kind: 'ok', msg: 'Petty cash request submitted for approval' })
@@ -385,6 +392,112 @@ export default function Expenses() {
       setSubmitting(false)
     }
   }
+
+  const fileUploader = (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+      onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files) }}
+      className={`rounded-2xl border-2 border-dashed px-4 py-5 text-center transition ${
+        dragOver
+          ? 'border-indigo-400 bg-indigo-50'
+          : uploads.length
+            ? 'border-emerald-300 bg-emerald-50/50'
+            : 'border-slate-300 bg-slate-50/70'
+      }`}
+    >
+      <input
+        id="ep-files"
+        type="file"
+        multiple
+        accept="image/*,.pdf"
+        onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
+        className="hidden"
+      />
+      <div className="flex flex-col items-center gap-2">
+        <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4m0 0L8 8m4-4l4 4M5 20h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+        <div className="text-[13px] text-slate-600">
+          <label htmlFor="ep-files" className="cursor-pointer font-semibold text-indigo-600 hover:underline">Browse files</label>
+          <span className="text-slate-400"> or drag &amp; drop</span>
+        </div>
+        <div className="text-[11px] text-slate-400">Images or PDF · up to 5 files · 25 MB each</div>
+        {uploads.length > 0 && (
+          <div className="mt-0.5 flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            {uploads.length} file{uploads.length > 1 ? 's' : ''} attached · tap to add more
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  const uploadList = uploads.length > 0 && (
+    <>
+    <div className="mt-3 mb-1.5 text-[12px] font-semibold text-slate-600">Attached ({uploads.length})</div>
+    <div className="grid grid-cols-3 gap-2.5">
+      {uploads.map((u) => {
+        const showImg = u.isImg && u.previewUrl && !brokenPreviews.has(u.id)
+        return (
+        <div key={u.id} className="group/file relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+          {showImg ? (
+            <img
+              src={u.previewUrl}
+              alt={u.name}
+              className="h-20 w-full object-cover"
+              onError={() => setBrokenPreviews((s) => new Set(s).add(u.id))}
+            />
+          ) : (
+            <div className="flex h-20 flex-col items-center justify-center gap-1 text-slate-400">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 3h7l5 5v11a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span className="text-[10px] font-semibold">{u.isImg ? 'IMAGE' : 'PDF'}</span>
+            </div>
+          )}
+
+          {u.status === 'uploading' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-slate-900/55">
+              <span className="text-[15px] font-bold tabular-nums text-white">{u.progress}%</span>
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-white/80">Uploading</span>
+              <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/25">
+                <div className="h-full bg-indigo-400 transition-all duration-200" style={{ width: `${u.progress}%` }} />
+              </div>
+            </div>
+          )}
+
+          {u.status === 'done' && (
+            <div className="absolute left-1 top-1 flex items-center gap-0.5 rounded-full bg-emerald-500 py-0.5 pl-1 pr-1.5 text-white shadow">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span className="text-[9px] font-bold">Uploaded</span>
+            </div>
+          )}
+
+          {u.status === 'error' && (
+            <button
+              type="button"
+              onClick={() => retryUpload(u.id)}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-rose-600/85 text-white"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span className="text-[10px] font-bold">Failed · Retry</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => removeFile(u.id)}
+            className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/70 text-white shadow transition hover:bg-rose-600"
+            aria-label="Remove file"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
+          </button>
+          <div className="truncate bg-white/95 px-1.5 py-1 text-[10px] text-slate-500">{u.name} · {fileSize(u.size)}</div>
+        </div>
+        )
+      })}
+    </div>
+    </>
+  )
 
   return (
     <div className="min-h-dvh gradient-mesh">
@@ -694,6 +807,11 @@ export default function Expenses() {
                   <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" strokeLinecap="round" /></svg>
                   <span>Cash will be released from the bank into the Tumukur Production Petty Cash box after approval.</span>
                 </div>
+                <div>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Attach proof <span className="font-medium text-slate-400">(optional)</span></label>
+                  {fileUploader}
+                  {uploadList}
+                </div>
                 </>
                 ) : (
                 <>
@@ -840,108 +958,8 @@ export default function Expenses() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Bill files <span className="font-medium text-slate-400">(image / PDF · up to 5 · 25 MB each)</span></label>
-                  <div
-                    onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-                    onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
-                    onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files) }}
-                    className={`rounded-2xl border-2 border-dashed px-4 py-5 text-center transition ${
-                      dragOver
-                        ? 'border-indigo-400 bg-indigo-50'
-                        : uploads.length
-                          ? 'border-emerald-300 bg-emerald-50/50'
-                          : 'border-slate-300 bg-slate-50/70'
-                    }`}
-                  >
-                    <input
-                      id="ep-files"
-                      type="file"
-                      multiple
-                      accept="image/*,.pdf"
-                      onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
-                      className="hidden"
-                    />
-                    <div className="flex flex-col items-center gap-2">
-                      <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 16V4m0 0L8 8m4-4l4 4M5 20h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                      </span>
-                      <div className="text-[13px] text-slate-600">
-                        <label htmlFor="ep-files" className="cursor-pointer font-semibold text-indigo-600 hover:underline">Browse files</label>
-                        <span className="text-slate-400"> or drag &amp; drop</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400">Images or PDF · up to 5 files · 25 MB each</div>
-                      {uploads.length > 0 && (
-                        <div className="mt-0.5 flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                          {uploads.length} file{uploads.length > 1 ? 's' : ''} attached · tap to add more
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {uploads.length > 0 && (
-                    <>
-                    <div className="mt-3 mb-1.5 text-[12px] font-semibold text-slate-600">Attached ({uploads.length})</div>
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {uploads.map((u) => {
-                        const showImg = u.isImg && u.previewUrl && !brokenPreviews.has(u.id)
-                        return (
-                        <div key={u.id} className="group/file relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                          {showImg ? (
-                            <img
-                              src={u.previewUrl}
-                              alt={u.name}
-                              className="h-20 w-full object-cover"
-                              onError={() => setBrokenPreviews((s) => new Set(s).add(u.id))}
-                            />
-                          ) : (
-                            <div className="flex h-20 flex-col items-center justify-center gap-1 text-slate-400">
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 3h7l5 5v11a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                              <span className="text-[10px] font-semibold">{u.isImg ? 'IMAGE' : 'PDF'}</span>
-                            </div>
-                          )}
-
-                          {u.status === 'uploading' && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-slate-900/55">
-                              <span className="text-[15px] font-bold tabular-nums text-white">{u.progress}%</span>
-                              <span className="text-[9px] font-semibold uppercase tracking-wide text-white/80">Uploading</span>
-                              <div className="absolute inset-x-0 bottom-0 h-1.5 bg-white/25">
-                                <div className="h-full bg-indigo-400 transition-all duration-200" style={{ width: `${u.progress}%` }} />
-                              </div>
-                            </div>
-                          )}
-
-                          {u.status === 'done' && (
-                            <div className="absolute left-1 top-1 flex items-center gap-0.5 rounded-full bg-emerald-500 py-0.5 pl-1 pr-1.5 text-white shadow">
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                              <span className="text-[9px] font-bold">Uploaded</span>
-                            </div>
-                          )}
-
-                          {u.status === 'error' && (
-                            <button
-                              type="button"
-                              onClick={() => retryUpload(u.id)}
-                              className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-rose-600/85 text-white"
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                              <span className="text-[10px] font-bold">Failed · Retry</span>
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => removeFile(u.id)}
-                            className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/70 text-white shadow transition hover:bg-rose-600"
-                            aria-label="Remove file"
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
-                          </button>
-                          <div className="truncate bg-white/95 px-1.5 py-1 text-[10px] text-slate-500">{u.name} · {fileSize(u.size)}</div>
-                        </div>
-                        )
-                      })}
-                    </div>
-                    </>
-                  )}
+                  {fileUploader}
+                  {uploadList}
                 </div>
                 </>
                 )}
