@@ -25,6 +25,10 @@ describe('endpoints', () => {
     expect(endpoints.verifyOtp).toBe('/verify-otp')
     expect(endpoints.expenses).toBe('/production-expense')
   })
+
+  it('exposes the employee-list endpoint used by reimbursements', () => {
+    expect(endpoints.employeeList).toBe('/employee-list')
+  })
 })
 
 describe('API bases', () => {
