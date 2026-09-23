@@ -49,6 +49,7 @@ export default function CreateVendorModal({ open, onClose, onSuccess, editReques
   const [createdId, setCreatedId] = useState<number | null>(null)
   const [updated, setUpdated] = useState(false)
   const [inlineError, setInlineError] = useState('')
+  const [states, setStates] = useState<{ state_code: string; state: string }[]>([])
 
   const isEdit = !!editRequest
 
@@ -61,6 +62,15 @@ export default function CreateVendorModal({ open, onClose, onSuccess, editReques
     setInlineError('')
     setToast(null)
   }, [open, editRequest])
+
+  useEffect(() => {
+    if (!open || states.length) return
+    api
+      .get(`${API_BASE}/get_state_code`)
+      .then((r) => setStates(r?.data?.data || []))
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   const setField = (k: keyof typeof emptyForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -265,13 +275,18 @@ export default function CreateVendorModal({ open, onClose, onSuccess, editReques
                 </div>
                 <div>
                   <label className={labelCls}>State</label>
-                  <input
-                    type="text"
+                  <select
                     value={form.billingState}
                     onChange={(e) => setField('billingState', e.target.value)}
-                    placeholder="State"
                     className={inputCls}
-                  />
+                  >
+                    <option value="">Select state…</option>
+                    {states.map((s) => (
+                      <option key={s.state_code} value={s.state_code}>
+                        {s.state} ({s.state_code})
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="col-span-2 sm:col-span-1">
                   <label className={labelCls}>Pincode</label>
