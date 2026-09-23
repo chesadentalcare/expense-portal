@@ -861,8 +861,11 @@ export default function Expenses() {
                       <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Your vendor requests</div>
                       <div className="space-y-1.5">
                         {vendorRequests.map((vr) => {
+                          const hasCard = !!vr.sap_card_code
                           const pending = vr.status === 'pending'
-                          const approved = vr.status === 'approved'
+                          const approved = vr.status === 'approved' && hasCard
+                          // approved but no CardCode yet = SAP create still pending/failed → amber, not green
+                          const processing = vr.status === 'approved' && !hasCard
                           const rejected = vr.status === 'rejected'
                           const pillCls = approved
                             ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
@@ -870,10 +873,12 @@ export default function Expenses() {
                               ? 'bg-rose-50 text-rose-700 ring-rose-200'
                               : 'bg-amber-50 text-amber-700 ring-amber-200'
                           const pillLabel = approved
-                            ? `SAP ${vr.sap_card_code || '—'}`
+                            ? `SAP ${vr.sap_card_code}`
                             : rejected
                               ? 'Rejected'
-                              : 'Pending'
+                              : processing
+                                ? 'Processing'
+                                : 'Pending'
                           return (
                             <div key={vr.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-slate-100">
                               <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-slate-700">{vr.vendor_name}</span>
