@@ -27,7 +27,7 @@ describe('endpoints', () => {
   })
 
   it('exposes the employee-list endpoint used by reimbursements', () => {
-    expect(endpoints.employeeList).toBe('/employee-list')
+    expect(endpoints.employeeList).toBe('/reimbursement-employees')
   })
 })
 
