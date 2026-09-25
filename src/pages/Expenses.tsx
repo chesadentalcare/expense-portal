@@ -676,8 +676,16 @@ export default function Expenses() {
                           {catBadge(r.category)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[15px] font-semibold text-slate-900">{r.category}</div>
-                          <div className="mt-0.5 truncate text-[13px] text-slate-500">{r.vendor || 'No vendor'}</div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="truncate text-[15px] font-semibold text-slate-900">{r.category}</div>
+                            {/* type_label + paid_to come from the gateway (utils/expenseType.js) */}
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${
+                              r.expense_type === 'petty_cash' ? 'bg-amber-50 text-amber-700 ring-amber-100'
+                              : r.expense_type === 'employee' ? 'bg-emerald-50 text-emerald-700 ring-emerald-100'
+                              : 'bg-indigo-50 text-indigo-700 ring-indigo-100'
+                            }`}>{r.type_label || 'Vendor'}</span>
+                          </div>
+                          <div className="mt-0.5 truncate text-[13px] text-slate-500">{r.paid_to || '—'}</div>
                         </div>
                         <div className="shrink-0 text-right">
                           <div className="text-[17px] font-bold tnum text-slate-900">{fmtINR(r.amount)}</div>
