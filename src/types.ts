@@ -21,6 +21,12 @@ export type Expense = {
   amount: number | string
   vendor: string | null
   vendor_card_code?: string | null
+  // Derived by the gateway (utils/expenseType.js) so every dashboard is consistent.
+  pay_to_type?: 'vendor' | 'employee' | 'petty_cash' | null
+  employee_name?: string | null
+  expense_type?: 'vendor' | 'employee' | 'petty_cash'
+  type_label?: string
+  paid_to?: string
   bill_date: string | null
   bill_description: string | null
   remarks: string | null
