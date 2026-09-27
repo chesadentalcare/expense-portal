@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import SearchSelect from '../components/SearchSelect'
 import StatementModal from '../components/StatementModal'
 import CreateVendorModal from '../components/CreateVendorModal'
+import axios from 'axios'
 import { compressImage, describeUploadError, formatMB } from '../utils/imageCompress'
 import { uploadInChunks, HARD_MAX } from '../utils/chunkUpload'
 import type { Expense, Option } from '../types'
@@ -95,6 +96,7 @@ type Upload = {
   serverName?: string
   error?: string
   file?: File
+  existing?: boolean
 }
 
 type VendorRequest = {
@@ -107,6 +109,13 @@ type VendorRequest = {
 }
 
 const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36)
+
+const reapplyErr = (err: unknown): string => {
+  if (axios.isAxiosError(err) && err.response?.status === 409) {
+    return 'This expense is no longer rejected — refresh to see its latest status.'
+  }
+  return describeUploadError(err)
+}
 
 const readAsDataURL = (f: File) =>
   new Promise<string>((resolve) => {
@@ -122,6 +131,7 @@ export default function Expenses() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('all')
   const [showForm, setShowForm] = useState(false)
+  const [reapplyId, setReapplyId] = useState<number | null>(null)
   const [form, setForm] = useState({ ...emptyForm })
   const [uploads, setUploads] = useState<Upload[]>([])
   const uploadsRef = useRef<Upload[]>([])
@@ -302,6 +312,63 @@ export default function Expenses() {
     setForm({ ...emptyForm })
     setUploads([])
     setBrokenPreviews(new Set())
+    setReapplyId(null)
+  }
+
+  const closeForm = () => {
+    if (submitting) return
+    setShowForm(false)
+    resetForm()
+  }
+
+  const openReapply = (r: Expense) => {
+    const payTo: PayTo =
+      r.pay_to_type === 'employee' || r.pay_to_type === 'petty_cash' ? r.pay_to_type : 'vendor'
+    setForm({
+      category: r.category || '',
+      category_gl_code: String(r.gl_code ?? ''),
+      payTo,
+      vendor: r.vendor || '',
+      vendor_card_code: String(r.vendor_card_code ?? ''),
+      employee_name: r.employee_name || '',
+      employee_source: String(r.employee_source ?? ''),
+      employee_ref_id: String(r.employee_ref_id ?? ''),
+      amount: r.amount != null ? String(r.amount) : '',
+      bill_date: (r.bill_date || '').slice(0, 10),
+      bill_description: r.bill_description || '',
+      remarks: r.remarks || r.bill_description || '',
+    })
+    setBrokenPreviews(new Set())
+    setReapplyId(r.id)
+    setShowForm(true)
+
+    void (async () => {
+      try {
+        const { data } = await api.get(`${endpoints.expenses}/${r.id}`)
+        const bills = (data?.data?.bills || []) as { bill_image_path?: string | null; billImageUrl?: string | null }[]
+        const existing: Upload[] = bills
+          .filter((b): b is { bill_image_path: string; billImageUrl?: string | null } => !!b.bill_image_path)
+          .map((b) => {
+            const path = b.bill_image_path
+            const name = path.split('/').pop() || path
+            const isImg = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name)
+            return {
+              id: genId(),
+              name,
+              size: 0,
+              isImg,
+              previewUrl: isImg ? billFileUrl(b.billImageUrl) || '' : '',
+              status: 'done' as const,
+              progress: 100,
+              serverName: path,
+              existing: true,
+            }
+          })
+        if (existing.length) setUploads(existing)
+      } catch {
+        /* existing bills are optional — reapply still works with new files */
+      }
+    })()
   }
 
   const submit = async (e: React.FormEvent) => {
@@ -331,13 +398,17 @@ export default function Expenses() {
         const pettyPreUploaded = uploads.filter((u) => u.status === 'done').map((u) => u.serverName).filter(Boolean) as string[]
         if (pettyPreUploaded.length) fd.append('preUploadedBills', JSON.stringify(pettyPreUploaded))
 
-        await api.post(endpoints.expenses, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-        setToast({ kind: 'ok', msg: 'Petty cash request submitted for approval' })
+        await api.post(
+          reapplyId ? endpoints.expenseReapply(reapplyId) : endpoints.expenses,
+          fd,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        )
+        setToast({ kind: 'ok', msg: reapplyId ? 'Resubmitted for approval' : 'Petty cash request submitted for approval' })
         setShowForm(false)
         resetForm()
         void load()
       } catch (err) {
-        setToast({ kind: 'err', msg: describeUploadError(err) })
+        setToast({ kind: 'err', msg: reapplyErr(err) })
       } finally {
         setSubmitting(false)
       }
@@ -381,13 +452,17 @@ export default function Expenses() {
       const preUploaded = done.map((u) => u.serverName).filter(Boolean) as string[]
       if (preUploaded.length) fd.append('preUploadedBills', JSON.stringify(preUploaded))
 
-      await api.post(endpoints.expenses, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-      setToast({ kind: 'ok', msg: 'Expense submitted for approval' })
+      await api.post(
+        reapplyId ? endpoints.expenseReapply(reapplyId) : endpoints.expenses,
+        fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      )
+      setToast({ kind: 'ok', msg: reapplyId ? 'Resubmitted for approval' : 'Expense submitted for approval' })
       setShowForm(false)
       resetForm()
       void load()
     } catch (err) {
-      setToast({ kind: 'err', msg: describeUploadError(err) })
+      setToast({ kind: 'err', msg: reapplyErr(err) })
     } finally {
       setSubmitting(false)
     }
@@ -706,10 +781,28 @@ export default function Expenses() {
                           <span className="text-slate-400">No bill</span>
                         )}
                       </div>
-                      {r.status === 'rejected' && r.anju_rejected_reason && (
-                        <div className="mt-2.5 flex items-start gap-2 rounded-xl bg-rose-50 px-3 py-2 text-[12px] text-rose-700 ring-1 ring-rose-100">
-                          <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" strokeLinecap="round" /></svg>
-                          <span><span className="font-semibold">Rejected:</span> {r.anju_rejected_reason}</span>
+                      {r.status === 'rejected' && (
+                        <div className="mt-2.5 rounded-xl bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700 ring-1 ring-rose-100">
+                          <div className="flex items-start gap-2">
+                            <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" strokeLinecap="round" /></svg>
+                            <span className="min-w-0 flex-1">
+                              <span className="font-semibold">Rejected:</span>{' '}
+                              {r.anju_rejected_reason || 'No reason was given — please review and reapply.'}
+                              {Number(r.reapply_count) > 0 && (
+                                <span className="ml-1.5 inline-flex items-center rounded-full bg-rose-100 px-1.5 py-px text-[10px] font-bold text-rose-600">
+                                  Reapplied {Number(r.reapply_count)}×
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openReapply(r)}
+                            className="mt-2.5 inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-1.5 text-[12px] font-semibold text-white shadow-[0_6px_18px_rgba(225,29,72,0.25)] transition hover:bg-rose-700 active:scale-95"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            Fix &amp; Reapply
+                          </button>
                         </div>
                       )}
                     </div>
@@ -732,7 +825,7 @@ export default function Expenses() {
       {showForm && (
         <div
           className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/50 backdrop-blur-sm animate-fade sm:items-center"
-          onClick={() => !submitting && setShowForm(false)}
+          onClick={closeForm}
         >
           <div
             className="max-h-[94dvh] w-full overflow-hidden rounded-t-3xl bg-white shadow-card-lg animate-sheet sm:max-w-lg sm:rounded-3xl"
@@ -741,17 +834,30 @@ export default function Expenses() {
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <div className="flex items-center gap-3">
                 <span className="flex h-9 w-9 items-center justify-center rounded-xl gradient-brand text-white">
-                  <PlusIcon className="h-[18px] w-[18px]" />
+                  {reapplyId ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  ) : (
+                    <PlusIcon className="h-[18px] w-[18px]" />
+                  )}
                 </span>
                 <div className="leading-tight">
-                  <h3 className="text-base font-bold text-slate-900">{form.payTo === 'petty_cash' ? 'Petty Cash Request' : form.payTo === 'employee' ? 'New Reimbursement' : 'New Expense'}</h3>
-                  <p className="text-[12px] text-slate-500">{form.payTo === 'petty_cash' ? 'Request petty cash funding — sent for approval' : form.payTo === 'employee' ? 'Reimburse an employee — sent for approval' : 'Submit a bill for approval'}</p>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {reapplyId
+                      ? `Reapply expense #${reapplyId}`
+                      : form.payTo === 'petty_cash' ? 'Petty Cash Request' : form.payTo === 'employee' ? 'New Reimbursement' : 'New Expense'}
+                  </h3>
+                  <p className="text-[12px] text-slate-500">
+                    {reapplyId
+                      ? 'Fix the issue and resubmit for approval'
+                      : form.payTo === 'petty_cash' ? 'Request petty cash funding — sent for approval' : form.payTo === 'employee' ? 'Reimburse an employee — sent for approval' : 'Submit a bill for approval'}
+                  </p>
                 </div>
               </div>
-              <button onClick={() => !submitting && setShowForm(false)} className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+              <button onClick={closeForm} className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" /></svg>
               </button>
             </div>
+            {!reapplyId && (
             <div className="flex border-b border-slate-100">
               {([
                 { key: 'vendor', label: 'Expense' },
@@ -782,6 +888,7 @@ export default function Expenses() {
                 </button>
               ))}
             </div>
+            )}
             <form onSubmit={submit} className="flex max-h-[80dvh] flex-col">
               <div className="space-y-4 overflow-y-auto px-5 py-5">
                 {form.payTo === 'petty_cash' ? (
@@ -980,7 +1087,7 @@ export default function Expenses() {
               <div className="flex gap-3 border-t border-slate-100 px-5 py-4">
                 <button
                   type="button"
-                  onClick={() => setShowForm(false)}
+                  onClick={closeForm}
                   disabled={submitting}
                   className="flex-1 rounded-2xl border border-slate-200 py-3 text-[14px] font-semibold text-slate-600 transition hover:bg-slate-50 active:scale-[0.99]"
                 >
@@ -992,7 +1099,11 @@ export default function Expenses() {
                   className="flex flex-[2] items-center justify-center gap-2 rounded-2xl gradient-brand py-3 text-[14px] font-semibold text-white shadow-brand transition hover:brightness-105 active:scale-[0.99] disabled:opacity-50 disabled:shadow-none"
                 >
                   {submitting ? <Spinner /> : null}
-                  {uploads.some((u) => u.status === 'uploading') ? 'Uploading…' : submitting ? 'Submitting…' : 'Submit for Approval'}
+                  {uploads.some((u) => u.status === 'uploading')
+                    ? 'Uploading…'
+                    : submitting
+                      ? (reapplyId ? 'Resubmitting…' : 'Submitting…')
+                      : (reapplyId ? 'Resubmit for Approval' : 'Submit for Approval')}
                 </button>
               </div>
             </form>
