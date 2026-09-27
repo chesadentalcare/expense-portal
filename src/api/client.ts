@@ -23,4 +23,5 @@ export const endpoints = {
   vendorRequestsMine: '/vendor-requests/mine',
   vendorRequestUpdate: '/vendor-requests/update',
   expenses: '/production-expense',
+  expenseReapply: (id: number | string) => `/production-expense/${id}/reapply`,
 }

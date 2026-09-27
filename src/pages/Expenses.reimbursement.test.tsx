@@ -120,3 +120,81 @@ describe('Expenses — reimbursement submission', () => {
     expect(fd.get('employee_ref_id')).toBeNull()
   })
 })
+
+const REJECTED_EXPENSE = {
+  id: 77,
+  category: 'Bus Fare',
+  gl_code: '70439',
+  amount: 500,
+  vendor: 'ACME Supplies',
+  vendor_card_code: 'V001',
+  pay_to_type: 'vendor',
+  expense_type: 'vendor',
+  type_label: 'Vendor',
+  paid_to: 'ACME Supplies',
+  bill_date: '2026-09-21',
+  bill_description: 'Site visit',
+  remarks: 'Site visit',
+  status: 'rejected',
+  submitted_by: 'Tester',
+  anju_rejected_reason: 'Please add the fare breakup',
+  reapply_count: 2,
+  billImageUrl: '/uploads/expense_portal/old.png',
+}
+
+describe('Expenses — reapply a rejected expense', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(api.get as unknown as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url === `${endpoints.expenses}/77`) {
+        return Promise.resolve({
+          data: { data: { ...REJECTED_EXPENSE, bills: [{ bill_image_path: 'expense_portal/old.png', billImageUrl: '/uploads/expense_portal/old.png' }] } },
+        })
+      }
+      return Promise.resolve({ data: { data: [REJECTED_EXPENSE], requests: [] } })
+    })
+    ;(api.post as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ data: { success: true } })
+    localStorage.clear()
+  })
+
+  it('shows the rejection reason + Reapplied count and posts to the reapply endpoint with existing bill', async () => {
+    const user = userEvent.setup()
+    render(<Expenses />)
+
+    await waitFor(() => expect(screen.getByText(/Please add the fare breakup/i)).toBeInTheDocument())
+    expect(screen.getByText(/Reapplied 2×/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Fix & Reapply/i }))
+
+    await waitFor(() => expect(screen.getByText(/Reapply expense #77/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/1 file attached/i)).toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: /Resubmit for Approval/i }))
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled())
+    const call = (api.post as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)!
+    expect(call[0]).toBe(endpoints.expenseReapply(77))
+    const fd = call[1] as FormData
+    expect(fd.get('category')).toBe('Bus Fare')
+    expect(fd.get('amount')).toBe('500')
+    expect(fd.get('pay_to_type')).toBe('vendor')
+    expect(fd.get('vendor')).toBe('ACME Supplies')
+    expect(JSON.parse(String(fd.get('preUploadedBills')))).toContain('expense_portal/old.png')
+  })
+
+  it('surfaces a friendly message on 409 (expense no longer rejected)', async () => {
+    ;(api.post as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new Error('conflict'), { isAxiosError: true, response: { status: 409 } }),
+    )
+    const user = userEvent.setup()
+    render(<Expenses />)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Fix & Reapply/i })).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /Fix & Reapply/i }))
+    await waitFor(() => expect(screen.getByText(/Reapply expense #77/i)).toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: /Resubmit for Approval/i }))
+
+    await waitFor(() => expect(screen.getByText(/no longer rejected/i)).toBeInTheDocument())
+  })
+})
