@@ -146,6 +146,7 @@ export default function Expenses() {
   const [showVendorModal, setShowVendorModal] = useState(false)
   const [vendorRequests, setVendorRequests] = useState<VendorRequest[]>([])
   const [editVendorRequest, setEditVendorRequest] = useState<VendorRequest | null>(null)
+  const [billsView, setBillsView] = useState<{ id: number; loading: boolean; bills: { name: string; url: string; isImg: boolean; isPdf: boolean }[] } | null>(null)
 
   const setField = (k: keyof typeof emptyForm, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -367,6 +368,34 @@ export default function Expenses() {
         if (existing.length) setUploads(existing)
       } catch {
         /* existing bills are optional — reapply still works with new files */
+      }
+    })()
+  }
+
+  // Open the all-bills modal: fetch the full expense so EVERY attached bill shows,
+  // not just the primary one.
+  const openBills = (r: Expense) => {
+    setBillsView({ id: r.id, loading: true, bills: [] })
+    void (async () => {
+      try {
+        const { data } = await api.get(`${endpoints.expenses}/${r.id}`)
+        const raw = (data?.data?.bills || []) as { bill_image_path?: string | null; billImageUrl?: string | null }[]
+        const bills = raw
+          .filter((b) => !!b.bill_image_path)
+          .map((b) => {
+            const path = b.bill_image_path as string
+            const name = path.split('/').pop() || path
+            return {
+              name,
+              url: billFileUrl(b.billImageUrl) || '',
+              isImg: /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name),
+              isPdf: /\.pdf$/i.test(name),
+            }
+          })
+          .filter((b) => b.url)
+        setBillsView({ id: r.id, loading: false, bills })
+      } catch {
+        setBillsView({ id: r.id, loading: false, bills: [] })
       }
     })()
   }
@@ -740,7 +769,6 @@ export default function Expenses() {
               ) : (
                 filtered.map((r) => {
                   const meta = statusMeta(r.status)
-                  const url = billFileUrl(r.billImageUrl)
                   return (
                     <div
                       key={r.id}
@@ -761,6 +789,9 @@ export default function Expenses() {
                             }`}>{r.type_label || 'Vendor'}</span>
                           </div>
                           <div className="mt-0.5 truncate text-[13px] text-slate-500">{r.paid_to || '—'}</div>
+                          {(r.bill_description || r.remarks) ? (
+                            <div className="mt-0.5 truncate text-[12px] text-slate-400" title={r.bill_description || r.remarks || ''}>{r.bill_description || r.remarks}</div>
+                          ) : null}
                         </div>
                         <div className="shrink-0 text-right">
                           <div className="text-[17px] font-bold tnum text-slate-900">{fmtINR(r.amount)}</div>
@@ -772,11 +803,11 @@ export default function Expenses() {
                       </div>
                       <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5 text-[12px]">
                         <span className="tnum text-slate-400">#{r.id} · {fmtDate(r.bill_date)}</span>
-                        {url ? (
-                          <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:underline">
+                        {r.billImageUrl ? (
+                          <button type="button" onClick={() => openBills(r)} className="inline-flex items-center gap-1 font-semibold text-indigo-600 hover:underline">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 3h7v7M21 3l-9 9M19 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                            View bill
-                          </a>
+                            View bills
+                          </button>
                         ) : (
                           <span className="text-slate-400">No bill</span>
                         )}
@@ -1155,6 +1186,37 @@ export default function Expenses() {
         onClose={() => { setShowVendorModal(false); setEditVendorRequest(null) }}
         onSuccess={() => void loadVendorRequests()}
       />
+
+      {billsView && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setBillsView(null)}>
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-5 shadow-card-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-[15px] font-bold text-slate-900">Bills — expense #{billsView.id}{billsView.loading ? '' : ` (${billsView.bills.length})`}</h3>
+              <button type="button" onClick={() => setBillsView(null)} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">✕</button>
+            </div>
+            {billsView.loading ? (
+              <p className="text-[13px] text-slate-400">Loading bills…</p>
+            ) : billsView.bills.length === 0 ? (
+              <p className="text-[13px] text-slate-400">No bills attached.</p>
+            ) : (
+              <div className="flex flex-wrap gap-3">
+                {billsView.bills.map((b, i) => (
+                  <a key={i} href={b.url} target="_blank" rel="noreferrer" title={`Open ${b.name} in new tab`} className="block w-[140px]">
+                    {b.isImg ? (
+                      <img src={b.url} alt={b.name} className="h-[140px] w-[140px] rounded-lg border border-slate-200 object-cover" />
+                    ) : (
+                      <div className="flex h-[140px] w-[140px] flex-col items-center justify-center gap-1 rounded-lg border border-slate-200 bg-slate-50 text-[12px] font-semibold text-slate-500">
+                        <span className="text-[26px]">📄</span>
+                        {b.isPdf ? 'PDF' : (b.name.split('.').pop() || 'FILE').toUpperCase()} #{i + 1}
+                      </div>
+                    )}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div
