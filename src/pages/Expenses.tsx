@@ -275,8 +275,8 @@ export default function Expenses() {
     const current = uploadsRef.current
     const additions: Upload[] = []
     for (const f of Array.from(list)) {
-      if (current.length + additions.length >= 100) {
-        setToast({ kind: 'err', msg: 'You can attach up to 100 files.' })
+      if (current.length + additions.length >= 200) {
+        setToast({ kind: 'err', msg: 'You can attach up to 200 files.' })
         break
       }
       if (f.size > HARD_MAX) {
@@ -288,7 +288,7 @@ export default function Expenses() {
       additions.push({ id: genId(), name: f.name, size: f.size, isImg, previewUrl: '', status: 'uploading', progress: 0, file: f })
     }
     if (!additions.length) return
-    setUploads((prev) => [...prev, ...additions].slice(0, 100))
+    setUploads((prev) => [...prev, ...additions].slice(0, 200))
     for (const item of additions) {
       if (item.file && item.isImg) {
         void readAsDataURL(item.file).then((url) =>
@@ -497,7 +497,7 @@ export default function Expenses() {
           <label htmlFor="ep-files" className="cursor-pointer font-semibold text-indigo-600 hover:underline">Browse files</label>
           <span className="text-slate-400"> or drag &amp; drop</span>
         </div>
-        <div className="text-[11px] text-slate-400">Images or PDF · up to 100 files · 25 MB each</div>
+        <div className="text-[11px] text-slate-400">Images or PDF · up to 200 files · 25 MB each</div>
         {uploads.length > 0 && (
           <div className="mt-0.5 flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1077,7 +1077,7 @@ export default function Expenses() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Bill files <span className="font-medium text-slate-400">(image / PDF · up to 100 · 25 MB each)</span></label>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Bill files <span className="font-medium text-slate-400">(image / PDF · up to 200 · 25 MB each)</span></label>
                   {fileUploader}
                   {uploadList}
                 </div>
