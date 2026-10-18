@@ -469,6 +469,11 @@ export default function Expenses() {
         fd.append('employee_name', form.employee_name || '')
         fd.append('employee_source', form.employee_source || '')
         fd.append('employee_ref_id', form.employee_ref_id || '')
+        if (form.vendor_card_code) {
+          fd.append('vendor', form.vendor || '')
+          fd.append('vendor_card_code', form.vendor_card_code)
+          fd.append('reimburse_claim_itc', '1')
+        }
       } else {
         fd.append('vendor', form.vendor || '')
         fd.append('vendor_card_code', form.vendor_card_code || '')
@@ -1051,6 +1056,7 @@ export default function Expenses() {
                   )}
                 </div>
                 ) : (
+                <>
                 <div>
                   <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">Employee *</label>
                   <SearchSelect
@@ -1068,6 +1074,27 @@ export default function Expenses() {
                   />
                   <div className="mt-1.5 text-[12px] text-slate-500">Reimbursement is paid to the employee — no vendor.</div>
                 </div>
+                <div>
+                  <label className="mb-1.5 block text-[13px] font-semibold text-slate-700">
+                    Vendor paid on company's behalf <span className="font-medium text-slate-400">(optional)</span>
+                  </label>
+                  <SearchSelect
+                    value={form.vendor}
+                    placeholder="Search Ashva vendor"
+                    fetchOptions={fetchVendorOptions}
+                    onSelect={(opt) =>
+                      setForm((f) => ({
+                        ...f,
+                        vendor: opt ? opt.label : '',
+                        vendor_card_code: opt ? String(opt.raw.card_code ?? '') : '',
+                      }))
+                    }
+                  />
+                  <div className="mt-1.5 text-[12px] text-slate-500">
+                    Leave empty for a normal reimbursement. Pick the vendor the employee paid only when it's a GST tax invoice in the company's name — this routes it to the ITC flow.
+                  </div>
+                </div>
+                </>
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
